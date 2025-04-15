@@ -87,7 +87,7 @@ def calculate_expected_time(starting_level: int, num_logs: int, xp_per_log: floa
         chance = woodcut_success_chance(level, axe_high_low[axe_type][0], axe_high_low[axe_type][1])
         expected_time += (logs * (1 - chance) / chance) * 2.4
 
-    return expected_time / 3600
+    return expected_time / 3600, max(list(d.keys()))
 
 axe_assets = {
 "Bronze Axe": "https://oldschool.runescape.wiki/images/Bronze_axe.png",
@@ -129,13 +129,12 @@ log_assets = {
 # Streamlit UI
 # -----------------------
 
-st.title("OSRS Woodcutting Level Simulator")
+st.title("OSRS Woodcutting Grind Simulator")
 
 st.markdown("""
-This app simulates the distribution of logs cut across different woodcutting levels.
+This app simulates **how long it takes to cut a certain number of logs** in OSRS, and your level at the end of the grind.
 Select the axe type and log type below (the log type determines the XP gained per log),
 then input your current woodcutting level and the total number of logs you plan to cut.
-The simulation uses the standard OSRS XP formula.
 """)
 
 # Sidebar for asset selection:
@@ -151,12 +150,13 @@ num_logs = st.number_input("Enter the total number of logs you plan to cut", min
 
 # Determine XP per log based on selected log type
 xp_per_log = log_assets[selected_log][1]
-st.write(f"**XP per log for {selected_log}:** {xp_per_log}")
+st.write(f"**XP per {selected_log}:** {xp_per_log}")
 
 # Run the simulation when the user clicks a button
 if st.button("Mean (Average) Grind Time"):
-    distribution = calculate_expected_time(current_level, num_logs, xp_per_log, selected_axe)
+    distribution, ending_level = calculate_expected_time(current_level, num_logs, xp_per_log, selected_axe)
     st.markdown(f"**Total expected time to cut {num_logs} logs with {selected_axe}:** {distribution} hours")
+    st.markdown(f"**Level at end of the grind:** {ending_level}")
 
 st.markdown("""
 ---
@@ -167,7 +167,7 @@ This simulator uses
 $$XP(L) = \sum_{i=1}^{L–1} \left\lfloor (i + 300 \cdot 2^{i/7}) / 4 \\right\\rfloor$$
             
 2. Sum of mean of negative binomial distributions
-3. Axe high and low chances from wiki + linear interpolation
+3. Axe high and low chances (out of 255) from wiki + linear interpolation
 """)
 
 st.table(pd.DataFrame(axe_high_low).T.rename(columns={0: "Low Chance", 1: "High Chance"}))
