@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from scipy.integrate import quad
+from scipy import stats
 
 def cf_negative_binomial(t, r, p):
     """Characteristic function of a Negative Binomial distribution."""
@@ -131,14 +132,16 @@ def woodcut_success_chance(level, low_chance, high_chance):
     return (slope * level + low_chance) / 255
 
 
-def calculate_expected_time(starting_level: int, num_logs: int, xp_per_log: float, axe_type):
+def calculate_approx_expected_time(starting_level: int, num_logs: int, xp_per_log: float, axe_type):
     d = simulate_logs_distribution(starting_level, num_logs, xp_per_log)
-    expected_time = 0
+    params = []
     for level, logs in d.items():
         chance = woodcut_success_chance(level, axe_high_low[axe_type][0], axe_high_low[axe_type][1])
-        expected_time += (logs / chance) * 2.4 # L(1 - p)/p + Lp/p
-
-    return expected_time / 3600, max(list(d.keys()))
+        params.append((logs, chance))
+    mu, sigma = compute_mean_std(params)
+    mu = (mu + num_logs) * 2.4 / 3600
+    sigma *= 2.4 / 3600
+    return mu, sigma
 
 
 def calculate_woodcutting_time_distribution(starting_level: int, num_logs: int, xp_per_log: float, axe_type: str):
@@ -161,6 +164,9 @@ def calculate_woodcutting_time_distribution(starting_level: int, num_logs: int, 
     # Find the quartiles
     quartiles = np.interp([0.25, 0.5, 0.75], cdf, pdf_support)
     return pdf_support, pdf_vals, mu, sigma, quartiles, max(list(d.keys()))
+
+
+
 
 axe_assets = {
 "Bronze Axe": "https://oldschool.runescape.wiki/images/Bronze_axe.png",
@@ -226,6 +232,72 @@ num_logs = st.number_input("Enter the total number of logs you plan to cut", min
 xp_per_log = log_assets[selected_log][1]
 st.write(f"**XP per {selected_log}:** {xp_per_log}")
 
+if st.button("Approximate Grind Time Stats"):
+    mu, sigma = calculate_approx_expected_time(current_level, num_logs, xp_per_log, selected_axe)
+    # 1st quartile (25th percentile)
+    q1 = stats.norm.ppf(0.25, loc=mu, scale=sigma)
+
+    # 2nd quartile (50th percentile, median)
+    q2 = stats.norm.ppf(0.50, loc=mu, scale=sigma)
+
+    # 3rd quartile (75th percentile)
+    q3 = stats.norm.ppf(0.75, loc=mu, scale=sigma)
+
+    st.write(f"**Time Quartiles (in hours) from normal approximation:**")
+    st.write(f"Q1 (25th percentile): {q1:.2f} hours")
+    st.write(f"Median (50th percentile): {q2:.2f} hours")
+    st.write(f"Q3 (75th percentile): {q3:.2f} hours")
+
+    A = mu - 6 * sigma
+    B = mu + 6 * sigma
+    y_vals = np.arange(max(0, int(A)), int(B))
+    pdf_vals = stats.norm.pdf(y_vals, loc=mu, scale=sigma)
+
+    # Create histogram
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=y_vals,
+        y=pdf_vals,
+        mode='lines',
+        line=dict(color='blue'),
+        name='Approximate PMF'
+    ))
+
+    # Update layout for better visualization
+    fig.update_layout(
+        title="Approximate Probability Mass Function (PMF) of Time Distribution Using Normal",
+        xaxis_title="Time (hours)",
+        yaxis_title="Probability Density",
+        template="plotly_white",
+        legend_title="Legend"
+    )
+
+    # Add vertical lines for quartiles
+    fig.add_trace(go.Scatter(
+        x=[q1, q1],
+        y=[0, max(pdf_vals)],
+        mode='lines',
+        line=dict(color='orange', dash='dash'),
+        name=f"Q1: {q1:.2f}h"
+    ))
+    fig.add_trace(go.Scatter(
+        x=[q2, q2],
+        y=[0, max(pdf_vals)],
+        mode='lines',
+        line=dict(color='green', dash='dash'),
+        name=f"Median: {q2:.2f}h"
+    ))
+    fig.add_trace(go.Scatter(
+        x=[q3, q3],
+        y=[0, max(pdf_vals)],
+        mode='lines',
+        line=dict(color='red', dash='dash'),
+        name=f"Q3: {q3:.2f}h"
+    ))
+
+    # Display the plot in Streamlit
+    st.plotly_chart(fig)
+
 # Run the simulation when the user clicks a button
 if st.button("Grind Time Stats"):
     pdf_support, pdf_vals, mu, sigma, quartiles, ending_level = calculate_woodcutting_time_distribution(current_level, num_logs, xp_per_log, selected_axe)
@@ -235,7 +307,7 @@ if st.button("Grind Time Stats"):
 
     # Calculate quartiles
     q1, q2, q3 = quartiles
-    st.write(f"**Time Quartiles (in hours):**")
+    st.write(f"**True Time Quartiles (in hours):**")
     st.write(f"Q1 (25th percentile): {q1:.2f} hours")
     st.write(f"Median (50th percentile): {q2:.2f} hours")
     st.write(f"Q3 (75th percentile): {q3:.2f} hours")
@@ -265,21 +337,21 @@ if st.button("Grind Time Stats"):
         y=[0, max(pdf_vals)],
         mode='lines',
         line=dict(color='orange', dash='dash'),
-        name=f"Q1: {q1:.2f}s"
+        name=f"Q1: {q1:.2f}h"
     ))
     fig.add_trace(go.Scatter(
         x=[q2, q2],
         y=[0, max(pdf_vals)],
         mode='lines',
         line=dict(color='green', dash='dash'),
-        name=f"Median: {q2:.2f}s"
+        name=f"Median: {q2:.2f}h"
     ))
     fig.add_trace(go.Scatter(
         x=[q3, q3],
         y=[0, max(pdf_vals)],
         mode='lines',
         line=dict(color='red', dash='dash'),
-        name=f"Q3: {q3:.2f}s"
+        name=f"Q3: {q3:.2f}h"
     ))
 
     # Display the plot in Streamlit
