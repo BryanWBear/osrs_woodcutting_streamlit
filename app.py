@@ -1,6 +1,56 @@
 import streamlit as st
 import math
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from scipy.integrate import quad
+
+def cf_negative_binomial(t, r, p):
+    """Characteristic function of a Negative Binomial distribution."""
+    return (p / (1 - (1 - p) * np.exp(1j * t))) ** r
+
+def cf_product(t, params_list):
+    """Product of characteristic functions of multiple NB distributions."""
+    cf = np.ones_like(t, dtype=complex)
+    for r, p in params_list:
+        cf *= cf_negative_binomial(t, r, p)
+    return cf
+
+def compute_mean_std(params_list):
+    """Compute mean and std of a sum of independent NB distributions."""
+    means = [(r * (1 - p)) / p for r, p in params_list]
+    variances = [(r * (1 - p)) / (p ** 2) for r, p in params_list]
+    mean_y = sum(means)
+    std_y = np.sqrt(sum(variances))
+    return mean_y, std_y
+
+def inverse_cf_pdf(y_vals, cf_func):
+    """Numerically compute PDF using Gil-Pelaez inversion formula."""
+    pdf = []
+    for y in y_vals:
+        integrand = lambda t: np.real(np.exp(-1j * t * y) * cf_func(t))
+        integral, _ = quad(integrand, -np.pi, np.pi)
+        pdf.append(integral / 2*np.pi)
+    return np.array(pdf)
+
+
+def run_inversion_with_six_sigma(params_list, sigma_factor=6):
+    """Compute and plot PDF using numerical inversion with bounds from six-sigma rule."""
+    # Characteristic function
+    cf_func = lambda t: cf_product(t, params_list)
+
+    # Get mean and std for sum of NB
+    mean_y, std_y = compute_mean_std(params_list)
+    A = mean_y - sigma_factor * std_y
+    B = mean_y + sigma_factor * std_y
+    y_vals = np.arange(max(0, int(A)), int(B))
+
+    # Compute PDF using numerical integration
+    pdf_vals = inverse_cf_pdf(y_vals, cf_func)
+
+    return y_vals, pdf_vals, mean_y, std_y
+
 
 def xp_for_level(level):
     """
@@ -19,6 +69,7 @@ def xp_for_level(level):
         xp_i = math.floor((i + 300 * (2 ** (i / 7))) / 4)
         total_xp += xp_i
     return total_xp
+
 
 def simulate_logs_distribution(current_level, num_logs, xp_per_log=25):
     """
@@ -85,9 +136,31 @@ def calculate_expected_time(starting_level: int, num_logs: int, xp_per_log: floa
     expected_time = 0
     for level, logs in d.items():
         chance = woodcut_success_chance(level, axe_high_low[axe_type][0], axe_high_low[axe_type][1])
-        expected_time += (logs * (1 - chance) / chance) * 2.4
+        expected_time += (logs / chance) * 2.4 # L(1 - p)/p + Lp/p
 
     return expected_time / 3600, max(list(d.keys()))
+
+
+def calculate_woodcutting_time_distribution(starting_level: int, num_logs: int, xp_per_log: float, axe_type: str):
+    d = simulate_logs_distribution(starting_level, num_logs, xp_per_log)
+    params = []
+    for level, logs in d.items():
+        chance = woodcut_success_chance(level, axe_high_low[axe_type][0], axe_high_low[axe_type][1])
+        params.append((logs, chance))
+    pdf_support, pdf_vals, mu, sigma = run_inversion_with_six_sigma(params)
+    pdf_support = (pdf_support + num_logs) * 2.4 / 3600
+    
+    # Normalize pdf, mu, and sigma
+    pdf_vals /= np.sum(pdf_vals)
+    mu = (mu + num_logs) * 2.4 / 3600
+    sigma *= 2.4 / 3600
+
+    # Calculate the cumulative distribution function (CDF)
+    cdf = np.cumsum(pdf_vals)
+
+    # Find the quartiles
+    quartiles = np.interp([0.25, 0.5, 0.75], cdf, pdf_support)
+    return pdf_support, pdf_vals, mu, sigma, quartiles, max(list(d.keys()))
 
 axe_assets = {
 "Bronze Axe": "https://oldschool.runescape.wiki/images/Bronze_axe.png",
@@ -129,10 +202,11 @@ log_assets = {
 # Streamlit UI
 # -----------------------
 
-st.title("OSRS Woodcutting Grind Simulator")
+st.title("OSRS Woodcutting Grind Calculator")
 
 st.markdown("""
-This app simulates **how long it takes to cut a certain number of logs** in OSRS, and your level at the end of the grind.
+This app calculates **how long it takes to cut a certain number of logs** in OSRS, and your level at the end of the grind.
+Gives some idea of grind variance based on the distribution of possible grind times. 25th, 50th, and 75th percentiles are highlighted with colored lines. 
 Select the axe type and log type below (the log type determines the XP gained per log),
 then input your current woodcutting level and the total number of logs you plan to cut.
 """)
@@ -153,22 +227,76 @@ xp_per_log = log_assets[selected_log][1]
 st.write(f"**XP per {selected_log}:** {xp_per_log}")
 
 # Run the simulation when the user clicks a button
-if st.button("Mean (Average) Grind Time"):
-    distribution, ending_level = calculate_expected_time(current_level, num_logs, xp_per_log, selected_axe)
-    st.markdown(f"**Total expected time to cut {num_logs} logs with {selected_axe}:** {distribution} hours")
+if st.button("Grind Time Stats"):
+    pdf_support, pdf_vals, mu, sigma, quartiles, ending_level = calculate_woodcutting_time_distribution(current_level, num_logs, xp_per_log, selected_axe)
+    st.markdown(f"**Mean expected time to cut {num_logs} {selected_log} with {selected_axe}:** {mu:.2f} hours")
     st.markdown(f"**Level at end of the grind:** {ending_level}")
+
+
+    # Calculate quartiles
+    q1, q2, q3 = quartiles
+    st.write(f"**Time Quartiles (in hours):**")
+    st.write(f"Q1 (25th percentile): {q1:.2f} hours")
+    st.write(f"Median (50th percentile): {q2:.2f} hours")
+    st.write(f"Q3 (75th percentile): {q3:.2f} hours")
+
+    # Create histogram
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=pdf_support,
+        y=pdf_vals,
+        mode='lines',
+        line=dict(color='blue'),
+        name='PMF'
+    ))
+
+    # Update layout for better visualization
+    fig.update_layout(
+        title="Probability Mass Function (PMF) of Time Distribution",
+        xaxis_title="Time (hours)",
+        yaxis_title="Probability Density",
+        template="plotly_white",
+        legend_title="Legend"
+    )
+
+    # Add vertical lines for quartiles
+    fig.add_trace(go.Scatter(
+        x=[q1, q1],
+        y=[0, max(pdf_vals)],
+        mode='lines',
+        line=dict(color='orange', dash='dash'),
+        name=f"Q1: {q1:.2f}s"
+    ))
+    fig.add_trace(go.Scatter(
+        x=[q2, q2],
+        y=[0, max(pdf_vals)],
+        mode='lines',
+        line=dict(color='green', dash='dash'),
+        name=f"Median: {q2:.2f}s"
+    ))
+    fig.add_trace(go.Scatter(
+        x=[q3, q3],
+        y=[0, max(pdf_vals)],
+        mode='lines',
+        line=dict(color='red', dash='dash'),
+        name=f"Q3: {q3:.2f}s"
+    ))
+
+    # Display the plot in Streamlit
+    st.plotly_chart(fig)
 
 st.markdown("""
 ---
-This simulator uses 
+This calculator uses 
             
 1. OSRS XP formula:
             
 $$XP(L) = \sum_{i=1}^{L–1} \left\lfloor (i + 300 \cdot 2^{i/7}) / 4 \\right\\rfloor$$
             
-2. Sum of mean of negative binomial distributions
+2. Inversion of characteristic function of a sum of independent negative binomial distributions to calculate the distribution of time to cut $N$ logs. This numerical integration is kind of shitty and slow, and somewhat erratic.
 3. Axe high and low chances (out of 255) from wiki + linear interpolation
 """)
 
 st.table(pd.DataFrame(axe_high_low).T.rename(columns={0: "Low Chance", 1: "High Chance"}))
 st.markdown("""to calculate the expected time to cut $N$ logs. Does not account for respawn times, and assumes that 4 game ticks = 1 woodcutting roll = 2.4 seconds.""")
+
