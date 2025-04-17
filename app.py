@@ -27,7 +27,7 @@ def compute_mean_std(params_list):
     return mean_y, std_y
 
 def inverse_cf_pdf(y_vals, cf_func):
-    """Numerically compute PDF using Gil-Pelaez inversion formula."""
+    """Numerically compute PDF using Gil-Pelaez inversion formula. Formula from Theorem 6.7 page 78 of https://wiredspace.wits.ac.za/server/api/core/bitstreams/aa0a75c9-30ef-4508-8134-9e4838ac2bd0/content"""
     pdf = []
     for y in y_vals:
         integrand = lambda t: np.real(np.exp(-1j * t * y) * cf_func(t))
