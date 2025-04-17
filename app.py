@@ -141,7 +141,7 @@ def calculate_approx_expected_time(starting_level: int, num_logs: int, xp_per_lo
     mu, sigma = compute_mean_std(params)
     mu = (mu + num_logs) * 2.4 / 3600
     sigma *= 2.4 / 3600
-    return mu, sigma
+    return mu, sigma, max(list(d.keys()))
 
 
 def calculate_woodcutting_time_distribution(starting_level: int, num_logs: int, xp_per_log: float, axe_type: str):
@@ -233,7 +233,10 @@ xp_per_log = log_assets[selected_log][1]
 st.write(f"**XP per {selected_log}:** {xp_per_log}")
 
 if st.button("Approximate Grind Time Stats"):
-    mu, sigma = calculate_approx_expected_time(current_level, num_logs, xp_per_log, selected_axe)
+    mu, sigma, ending_level = calculate_approx_expected_time(current_level, num_logs, xp_per_log, selected_axe)
+    st.markdown(f"**Mean expected time to cut {num_logs} {selected_log} with {selected_axe}:** {mu:.2f} hours")
+    st.markdown(f"**Level at end of the grind:** {ending_level}")
+
     # 1st quartile (25th percentile)
     q1 = stats.norm.ppf(0.25, loc=mu, scale=sigma)
 
